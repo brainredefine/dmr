@@ -9,7 +9,6 @@ type DebugResp = {
   overrule?: boolean;
   missing?: string[];
   dataPreview?: Record<string, string>;
-  notes?: string;
   error?: string;
 };
 
@@ -20,25 +19,28 @@ export default function Page() {
   const [missing, setMissing] = useState<string[] | null>(null);
   const [invoiceName, setInvoiceName] = useState<string | null>(null);
 
-  async function fetchJSON<T>(url: string, body: any): Promise<T> {
+  async function fetchJSON<T>(url: string, body: unknown): Promise<T> {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const j = (await res.json().catch(() => ({}))) as T;
-    if (!res.ok) throw new Error((j as any).error || `HTTP ${res.status}`);
+    const j = (await res.json().catch(() => ({}))) as unknown as T;
+    if (!res.ok) {
+      const errText = (j as unknown as { error?: string }).error || `HTTP ${res.status}`;
+      throw new Error(errText);
+    }
     return j;
   }
 
-  async function downloadDoc(overrule: boolean) {
-    const res = await fetch(`/api/dmr${overrule ? "" : ""}`, {
+  async function downloadDoc(overrule: boolean): Promise<void> {
+    const res = await fetch(`/api/dmr`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ suffix, overrule }),
     });
     if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(j.error || `HTTP ${res.status}`);
     }
     const blob = await res.blob();
@@ -63,32 +65,31 @@ export default function Page() {
     setInvoiceName(null);
 
     try {
-      // 1) Diagnostic: on récupère missing + invoiceName
       const dbg = await fetchJSON<DebugResp>("/api/dmr?debug=1", { suffix });
-      setInvoiceName(dbg.invoiceName || null);
-      const miss = dbg.missing || [];
+      setInvoiceName(dbg.invoiceName ?? null);
+      const miss = dbg.missing ?? [];
       if (miss.length === 0) {
-        // 2) Rien ne manque → on génère direct
         await downloadDoc(true);
       } else {
-        // 2) Il manque des champs → on affiche les boutons
         setMissing(miss);
       }
-    } catch (err: any) {
-      setError(err.message || "Error");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erreur";
+      setError(message);
     } finally {
       setLoading(false);
     }
   }
 
   async function onOverrule() {
-    setLoading(true);
-    setError(null);
     try {
+      setLoading(true);
+      setError(null);
       await downloadDoc(true);
-      setMissing(null); // reset après succès
-    } catch (err: any) {
-      setError(err.message || "Erreur");
+      setMissing(null);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erreur";
+      setError(message);
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,7 @@
+// /app/api/dmr/route.ts
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";           // pas de caching
-export const preferredRegion = ["fra1","cdg1"];   // EU (Frankfurt/Paris)
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,58 +9,87 @@ import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import { search_read, read } from "@/lib/odoo";
 
-/* ========== Helpers ========== */
-function fmtMoney(n: any) {
+/* ===== Types ===== */
+type M2O = [number, string];
+interface AccountMove {
+  id: number;
+  name: string | M2O;
+  tenancy_id: M2O | false | null;
+  period_date_start?: string | null;
+  invoice_date?: string | null;
+}
+interface Tenancy {
+  id: number;
+  name: string;
+  partner_id: M2O | false | null;
+  current_rent?: number | string | null;
+  current_ancillary_costs?: number | string | null;
+  ancillary_cost_type_id?: M2O | false | null;
+  total_current_rent_gross?: number | string | null;
+  main_property_id?: M2O | false | null;
+}
+interface ResPartner {
+  id: number;
+  name?: string | null;
+  street?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  vat?: string | null;
+}
+interface PropertyProperty {
+  id: number;
+  entity_id?: M2O | false | null;
+  sales_person_id?: M2O | false | null;
+}
+
+/* ===== Helpers ===== */
+function fmtMoney(n: unknown): string {
   const v = Number(n);
   if (!isFinite(v)) return "";
-  return new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(v);
+  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
-function fmtDateJJMMYYYY(s: any) {
+function fmtDateJJMMYYYY(s: unknown): string {
   if (!s) return "";
   const d = new Date(String(s));
-  if (isNaN(d.getTime())) return "";
+  if (Number.isNaN(d.getTime())) return "";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}.${mm}.${yyyy}`;
 }
-function m2oLabel(v: any): string {
-  return Array.isArray(v) && v.length >= 2 ? String(v[1] ?? "") : "";
+function m2oLabel(v: unknown): string {
+  return Array.isArray(v) && v.length >= 2 ? String((v as M2O)[1] ?? "") : "";
 }
-function m2oId(v: any): number | null {
-  return Array.isArray(v) && v.length >= 1 ? Number(v[0]) : null;
+function m2oId(v: unknown): number | null {
+  return Array.isArray(v) && v.length >= 1 ? Number((v as M2O)[0]) : null;
 }
-function safeJoin(parts: Array<string | null | undefined>, sep = " ") {
+function safeJoin(parts: Array<string | null | undefined>, sep = " "): string {
   return parts.filter(Boolean).map((x) => String(x)).join(sep).trim();
 }
-function parseTenancyUnit(label: string) {
+function parseTenancyUnit(label: string): string {
   const parts = label.split("-").map((p) => p.trim());
   if (parts.length >= 2) return `${parts[0]} - ${parts[1]}`.trim();
   return parts[0] || "";
 }
-function splitTypeAndPct(label: string) {
+function splitTypeAndPct(label: string): { type: string; pct: string } {
   const m = label.match(/^(.*?)\s*\((.*?)\)\s*$/);
   if (m) return { type: m[1].trim(), pct: m[2].trim() };
   return { type: label.trim(), pct: "" };
 }
-function isEmpty(v: any) {
+function isEmpty(v: unknown): boolean {
   return v === null || v === undefined || v === "";
 }
 
+/* ===== Handler ===== */
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
   const overruleQS = url.searchParams.get("overrule") === "1";
-  const diag: any = { ok: false, steps: {} };
 
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = (await req.json().catch(() => ({}))) as { suffix?: unknown; overrule?: unknown };
     const suffix = String(body?.suffix ?? "").trim();
-    const overruleBody = Boolean(body?.overrule);
-    const overrule = overruleBody || overruleQS;
+    const overrule = Boolean(body?.overrule) || overruleQS;
 
     if (!/^\d{5}$/.test(suffix)) {
       return NextResponse.json(
@@ -69,35 +99,30 @@ export async function POST(req: Request) {
     }
 
     const invoiceName = `Re.:/2025/${suffix}`;
-    diag.steps.invoiceName = invoiceName;
 
-    // 1️⃣ account.move
-    const moves = await search_read(
+    // 1) account.move
+    const moves = await search_read<AccountMove>(
       "account.move",
       [["name", "=", invoiceName]],
       ["id", "name", "tenancy_id", "period_date_start", "invoice_date"],
       1
     );
-    if (!moves.length) {
+    if (moves.length === 0) {
       return NextResponse.json(
         { ok: false, error: `Facture introuvable: ${invoiceName}` },
         { status: 404 }
       );
     }
-
     const move = moves[0];
     const moveName = typeof move.name === "string" ? move.name : m2oLabel(move.name);
     const tenancyLabel = m2oLabel(move.tenancy_id);
     const tenancyId = m2oId(move.tenancy_id);
     if (!tenancyId) {
-      return NextResponse.json(
-        { ok: false, error: "Facture sans tenancy_id." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Facture sans tenancy_id." }, { status: 400 });
     }
 
-    // 2️⃣ property.tenancy
-    const [tenancy] = await read("property.tenancy", tenancyId, [
+    // 2) tenancy
+    const tenancyArr = await read<Tenancy>("property.tenancy", tenancyId, [
       "id",
       "name",
       "partner_id",
@@ -107,6 +132,7 @@ export async function POST(req: Request) {
       "total_current_rent_gross",
       "main_property_id",
     ]);
+    const tenancy = tenancyArr[0];
     if (!tenancy) {
       return NextResponse.json(
         { ok: false, error: `Tenancy introuvable (${tenancyId})` },
@@ -114,19 +140,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3️⃣ Contact
+    // 3) contact
     const contactId = m2oId(tenancy.partner_id);
-    let contact: any = null;
+    let contact: ResPartner | null = null;
     if (contactId) {
-      const r = await read("res.partner", contactId, ["id", "name", "street", "zip", "city"]);
+      const r = await read<ResPartner>("res.partner", contactId, ["id", "name", "street", "zip", "city"]);
       contact = Array.isArray(r) ? r[0] : null;
     }
 
-    // 4️⃣ property.property
+    // 4) property.property
     const mainPropId = m2oId(tenancy.main_property_id);
-    let mainProp: any = null;
+    let mainProp: PropertyProperty | null = null;
     if (mainPropId) {
-      const r = await read("property.property", mainPropId, [
+      const r = await read<PropertyProperty>("property.property", mainPropId, [
         "id",
         "entity_id",
         "sales_person_id",
@@ -134,23 +160,22 @@ export async function POST(req: Request) {
       mainProp = Array.isArray(r) ? r[0] : null;
     }
 
-    // 5️⃣ Entity
+    // 5) entity
     const entityId = m2oId(mainProp?.entity_id);
     const entityLabel = m2oLabel(mainProp?.entity_id);
-    let entity: any = null;
+    let entity: ResPartner | null = null;
     if (entityId) {
-      const r = await read("res.partner", entityId, ["id", "name", "vat", "street", "zip", "city"]);
+      const r = await read<ResPartner>("res.partner", entityId, ["id", "name", "vat", "street", "zip", "city"]);
       entity = Array.isArray(r) ? r[0] : null;
     }
 
-    // 6️⃣ Salesperson
+    // 6) salesperson
     const salesmanLabel = m2oLabel(mainProp?.sales_person_id);
 
-    // 7️⃣ Ancillary
-    const ancillaryLabel = m2oLabel(tenancy.ancillary_cost_type_id);
-    const { type: typeneben, pct: taxpct } = splitTypeAndPct(ancillaryLabel);
+    // 7) ancillary
+    const { type: typeneben, pct: taxpct } = splitTypeAndPct(m2oLabel(tenancy.ancillary_cost_type_id));
 
-    // 8️⃣ Montants
+    // 8) montants
     const currentRent = Number(tenancy.current_rent ?? 0);
     const currentNeben = Number(tenancy.current_ancillary_costs ?? 0);
     const totalRent = Number(tenancy.total_current_rent_gross ?? 0);
@@ -160,30 +185,30 @@ export async function POST(req: Request) {
     const total1 = currentRent + tax;
     const total2 = currentNeben + taxNeben;
 
-    // 9️⃣ Adresses
-    const contactAddress = contact?.street || "";
-    const contactZipCity = safeJoin([contact?.zip, contact?.city], " ");
+    // 9) adresses
+    const contactAddress = contact?.street ?? "";
+    const contactZipCity = safeJoin([contact?.zip ?? "", contact?.city ?? ""], " ");
     const contactTotalAddress = safeJoin(
       [contactAddress, contactZipCity ? `, ${contactZipCity}` : ""],
       ""
     );
 
-    // 👉 Ajout virgule entre rue et zip/city pour entityaddress
+    // virgule entre street et zip/city
     const entityAddress = entity?.street
       ? `${entity.street}${entity.zip || entity.city ? ", " : ""}${safeJoin(
-          [entity?.zip, entity?.city],
+          [entity?.zip ?? "", entity?.city ?? ""],
           " "
         )}`
-      : safeJoin([entity?.zip, entity?.city], " ");
+      : safeJoin([entity?.zip ?? "", entity?.city ?? ""], " ");
 
-    // 🔟 Dates + unité
-    const timeStart = fmtDateJJMMYYYY(move.period_date_start);
-    const invDate = fmtDateJJMMYYYY(move.invoice_date);
+    // dates + unité
+    const timeStart = fmtDateJJMMYYYY(move.period_date_start ?? "");
+    const invDate = fmtDateJJMMYYYY(move.invoice_date ?? "");
     const tenancyUnit = parseTenancyUnit(tenancyLabel);
 
-    // 🔢 Données Word
-    const data = {
-      contactname: contact?.name || "",
+    // data pour docx
+    const data: Record<string, string> = {
+      contactname: contact?.name ?? "",
       address: contactAddress,
       zipcity: contactZipCity,
       timestart: timeStart,
@@ -191,7 +216,7 @@ export async function POST(req: Request) {
       tenancyunit: tenancyUnit,
       invoiceid: moveName,
       entityid: entityLabel,
-      ustid: entity?.vat || "",
+      ustid: entity?.vat ?? "",
       entityaddress: entityAddress,
       salesman: salesmanLabel,
       date: invDate,
@@ -206,26 +231,14 @@ export async function POST(req: Request) {
       taxneben: fmtMoney(total2 - currentNeben),
     };
 
-    // ✅ Check missing
-    const missing: string[] = [];
-    const keys = Object.keys(data);
-    for (const k of keys) {
-      if (isEmpty((data as any)[k])) missing.push(k);
-    }
+    // missing
+    const missing = Object.entries(data)
+      .filter(([, v]) => isEmpty(v))
+      .map(([k]) => k);
 
     if (debug) {
       return NextResponse.json(
-        {
-          ok: true,
-          invoiceName,
-          overrule,
-          missing,
-          dataPreview: data,
-          notes:
-            missing.length > 0
-              ? "Des tokens sortiront vides. Utilise {overrule:true} pour générer quand même."
-              : "Tout est prêt.",
-        },
+        { ok: true, invoiceName, overrule, missing, dataPreview: data },
         { status: 200 }
       );
     }
@@ -242,7 +255,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 🧩 Word
+    // génération docx
     const tplPath = path.join(process.cwd(), "public", "dmr.docx");
     if (!fs.existsSync(tplPath)) {
       return NextResponse.json(
@@ -258,7 +271,9 @@ export async function POST(req: Request) {
       linebreaks: true,
       delimiters: { start: "[", end: "]" },
       nullGetter: () => "",
-      parser: (tag) => ({ get: (scope: any) => scope[tag] }),
+      parser: (tag: string) => ({
+        get: (scope: Record<string, string>) => scope[tag] ?? "",
+      }),
     });
 
     doc.render(data);
@@ -273,10 +288,8 @@ export async function POST(req: Request) {
       status: 200,
       headers: { "Content-Disposition": `attachment; filename="${fileName}"` },
     });
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Erreur serveur" },
-      { status: 500 }
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Erreur serveur";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
