@@ -55,6 +55,11 @@ function fmtMoney(n: unknown): string {
     maximumFractionDigits: 2,
   }).format(v);
 }
+function cleanStr(v: unknown): string {
+  // Odoo renvoie parfois "false" (bool) pour champ vide
+  if (v === false || v === null || v === undefined) return "";
+  return String(v);
+}
 function fmtDateJJMMYYYY(s: unknown): string {
   if (!s) return "";
   const d = new Date(String(s));
@@ -84,8 +89,9 @@ function splitTypeAndPct(label: string): { type: string; pct: string } {
   return { type: label.trim(), pct: "" };
 }
 function isEmpty(v: unknown): boolean {
-  return v === null || v === undefined || v === "";
+  return v === false || v === null || v === undefined || v === "";
 }
+
 
 /* ===== Handler ===== */
 export async function POST(req: Request) {
@@ -193,20 +199,20 @@ export async function POST(req: Request) {
     const total2 = currentNeben + taxNeben;
 
     // 9) adresses
-    const contactAddress = contact?.street ?? "";
-    const contactZipCity = safeJoin([contact?.zip ?? "", contact?.city ?? ""], " ");
-    const contactTotalAddress = safeJoin(
-      [contactAddress, contactZipCity ? `, ${contactZipCity}` : ""],
-      ""
-    );
+// 🏠 contact address
+const contactAddress = cleanStr(contact?.street);
+const contactZipCity = safeJoin([cleanStr(contact?.zip), cleanStr(contact?.city)], " ");
+const contactTotalAddress = safeJoin(
+  [contactAddress, contactZipCity ? `, ${contactZipCity}` : ""],
+  ""
+);
 
-    // virgule entre street et zip/city
-    const entityAddress = entity?.street
-      ? `${entity.street}${entity.zip || entity.city ? ", " : ""}${safeJoin(
-          [entity?.zip ?? "", entity?.city ?? ""],
-          " "
-        )}`
-      : safeJoin([entity?.zip ?? "", entity?.city ?? ""], " ");
+// 🏢 entity address (avec virgule propre)
+const entityStreet = cleanStr(entity?.street);
+const entityZipCity = safeJoin([cleanStr(entity?.zip), cleanStr(entity?.city)], " ");
+const entityAddress = entityStreet
+  ? `${entityStreet}${entityZipCity ? ", " : ""}${entityZipCity}`
+  : entityZipCity;
 
     // dates + unité
     const timeStart = fmtDateJJMMYYYY(move.period_date_start ?? "");
