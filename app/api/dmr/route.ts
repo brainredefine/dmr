@@ -235,7 +235,7 @@ export async function POST(req: Request) {
       totalrent: fmtMoney(totalRent),
       total1: fmtMoney(total1),
       total2: fmtMoney(total2),
-      taxneben: fmtMoney(total2 - currentNeben), // TVA côté charges = total2 - currentneben
+      taxneben: fmtMoney(total2 - currentNeben),
     };
 
     // missing
@@ -262,7 +262,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // génération docx (Uint8Array -> ArrayBuffer -> Response)
+    // === génération docx (Uint8Array -> ArrayBuffer "propre") ===
     const tplPath = path.join(process.cwd(), "public", "dmr.docx");
     if (!fs.existsSync(tplPath)) {
       return NextResponse.json(
@@ -285,17 +285,20 @@ export async function POST(req: Request) {
 
     doc.render(data);
 
-    // -> Uint8Array
+    // 1) produire Uint8Array
     const u8 = doc.getZip().generate({ type: "uint8array" }) as Uint8Array;
-    // -> ArrayBuffer slice correct
-    const arrayBuffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+
+    // 2) copier dans un **nouvel ArrayBuffer** (évite le type `SharedArrayBuffer`)
+    const ab = new ArrayBuffer(u8.byteLength);
+    new Uint8Array(ab).set(u8);
 
     const fileName = `DMR_${invoiceName.replaceAll("/", "-")}.docx`;
-    return new Response(arrayBuffer, {
+
+    // 3) renvoyer la réponse binaire
+    return new Response(ab, {
       status: 200,
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-store",
       },
