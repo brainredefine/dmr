@@ -11,6 +11,7 @@ import { search_read, read } from "@/lib/odoo";
 
 /* ===== Types ===== */
 type M2O = [number, string];
+
 interface AccountMove {
   id: number;
   name: string | M2O;
@@ -18,6 +19,7 @@ interface AccountMove {
   period_date_start?: string | null;
   invoice_date?: string | null;
 }
+
 interface Tenancy {
   id: number;
   name: string;
@@ -28,6 +30,7 @@ interface Tenancy {
   total_current_rent_gross?: number | string | null;
   main_property_id?: M2O | false | null;
 }
+
 interface ResPartner {
   id: number;
   name?: string | null;
@@ -36,6 +39,7 @@ interface ResPartner {
   city?: string | null;
   vat?: string | null;
 }
+
 interface PropertyProperty {
   id: number;
   entity_id?: M2O | false | null;
@@ -46,7 +50,10 @@ interface PropertyProperty {
 function fmtMoney(n: unknown): string {
   const v = Number(n);
   if (!isFinite(v)) return "";
-  return new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v);
 }
 function fmtDateJJMMYYYY(s: unknown): string {
   if (!s) return "";
@@ -228,7 +235,7 @@ export async function POST(req: Request) {
       totalrent: fmtMoney(totalRent),
       total1: fmtMoney(total1),
       total2: fmtMoney(total2),
-      taxneben: fmtMoney(total2 - currentNeben),
+      taxneben: fmtMoney(total2 - currentNeben), // TVA côté charges = total2 - currentneben
     };
 
     // missing
@@ -255,7 +262,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // génération docx
+    // génération docx (Uint8Array -> ArrayBuffer -> Response)
     const tplPath = path.join(process.cwd(), "public", "dmr.docx");
     if (!fs.existsSync(tplPath)) {
       return NextResponse.json(
@@ -278,17 +285,22 @@ export async function POST(req: Request) {
 
     doc.render(data);
 
-    const nodeBuffer = doc.getZip().generate({ type: "nodebuffer" });
-    const blob = new Blob([nodeBuffer], {
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
+    // -> Uint8Array
+    const u8 = doc.getZip().generate({ type: "uint8array" }) as Uint8Array;
+    // -> ArrayBuffer slice correct
+    const arrayBuffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
     const fileName = `DMR_${invoiceName.replaceAll("/", "-")}.docx`;
-    return new NextResponse(blob, {
+    return new Response(arrayBuffer, {
       status: 200,
-      headers: { "Content-Disposition": `attachment; filename="${fileName}"` },
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Cache-Control": "no-store",
+      },
     });
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur serveur";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
