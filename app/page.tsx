@@ -108,7 +108,7 @@ export default function Page() {
           className="space-y-4 rounded-2xl border p-6 shadow-sm"
         >
           <label className="block text-sm font-medium">
-            5 derniers chiffres (Re.:/2025/xxxxx)
+            Invoice's 5 last numbers (Re.:/2025/xxxxx)
           </label>
           <input
             value={suffix}
@@ -123,7 +123,7 @@ export default function Page() {
             disabled={loading || suffix.length !== 5}
             className="w-full bg-black text-white rounded-lg py-2 disabled:opacity-50"
           >
-            {loading ? "Vérification..." : "Générer le document"}
+            {loading ? "Checking the information..." : "Generate the DMR"}
           </button>
         </form>
 
@@ -136,14 +136,14 @@ export default function Page() {
         {missing && (
           <div className="rounded-2xl border p-6 space-y-4">
             <p className="text-sm">
-              Des champs Odoo manquent. Tu peux{" "}
-              <span className="font-semibold">annuler</span> pour corriger les
-              données, ou <span className="font-semibold">forcer</span> la
-              génération (les zones manquantes seront vides).
+              Some fields are missing. You can{" "}
+              <span className="font-semibold">cancel</span> to add or correct the data in Odoo
+              , or <span className="font-semibold">force</span> the word
+              generation (missing fields will just be empty).
             </p>
 
             <div>
-              <p className="text-sm font-medium mb-1">Champs manquants :</p>
+              <p className="text-sm font-medium mb-1">Missing fields :</p>
               <ul className="list-disc pl-5 text-sm">
                 {missing.map((m) => (
                   <li key={m}>[{m}]</li>
@@ -161,10 +161,10 @@ export default function Page() {
               </button>
               <button
                 onClick={onOverrule}
-                className="flex-1 bg-black text-white rounded-lg py-2"
+                className="flex-1 border rounded-lg py-2"
                 disabled={loading}
               >
-                Overrule (faire quand même)
+                Overrule
               </button>
             </div>
           </div>
