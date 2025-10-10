@@ -16,7 +16,6 @@ function makeUrl(path: string): string {
 function xmlrpcCall<T = unknown>(url: string, method: string, params: unknown[]): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const client = xmlrpc.createSecureClient({ url });
-    // Types minimalistes, sans `any`
     client.methodCall(method, params, (err: unknown, value: unknown) => {
       if (err) return reject(err);
       resolve(value as T);
@@ -42,9 +41,8 @@ export async function execute_kw<T = unknown>(
   return xmlrpcCall<T>(url, "execute_kw", [ODOO_DB, uid, ODOO_API, model, method, args, kwargs]);
 }
 
-export async function search_read<
-  T extends Record<string, unknown> = Record<string, unknown>
->(
+// ⬇️ IMPORTANT: plus de contrainte "T extends Record<string, unknown>"
+export async function search_read<T = unknown>(
   model: string,
   domain: unknown[],
   fields: string[],
@@ -58,9 +56,7 @@ export async function search_read<
   );
 }
 
-export async function read<
-  T extends Record<string, unknown> = Record<string, unknown>
->(
+export async function read<T = unknown>(
   model: string,
   ids: number | number[],
   fields: string[]
