@@ -108,7 +108,7 @@ export default function Page() {
           className="space-y-4 rounded-2xl border p-6 shadow-sm"
         >
           <label className="block text-sm font-medium">
-            Invoice's 5 last numbers (Re.:/2025/xxxxx)
+            Invoice&apos;s 5 last numbers (Re.:/2025/xxxxx)
           </label>
           <input
             value={suffix}
